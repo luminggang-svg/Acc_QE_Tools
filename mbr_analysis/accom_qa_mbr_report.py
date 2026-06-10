@@ -420,6 +420,9 @@ function filterRange() {{
     makeChart(cfg.id, ds, cfg.yTitle, sliceLabels);
   }});
 
+  // Attach click handlers: Production Bugs → JIRA, Production Incidents → Datadog
+  addProductionClickHandler();
+
   // Filter table rows
   const rows = document.querySelectorAll('#dataTable tbody tr');
   rows.forEach((r, i) => {{
@@ -431,9 +434,43 @@ function filterRange() {{
   }});
 }}
 
+function addProductionClickHandler() {{
+  const chart = chartInstances['chart8'];
+  if (!chart) {{
+    console.warn('Production chart (chart8) not found.');
+    return;
+  }}
+  chart.canvas.style.cursor = 'pointer';
+  chart.canvas.removeEventListener('click', chart._clickHandler);
+  chart._clickHandler = function(evt) {{
+    const points = chart.getElementsAtEventForMode(evt, 'nearest', {{ intersect: true }}, true);
+    if (!points.length) return;
+    const idx = points[0].index;
+    const datasetIdx = points[0].datasetIndex;
+    const sliceLabels = chart.data.labels;
+    const endDateStr = sliceLabels[idx];
+    if (!endDateStr) return;
+    const endDate = new Date(endDateStr);
+    const startDate = new Date(endDate);
+    startDate.setDate(startDate.getDate() - 30);
+    const fmt = d => d.toISOString().slice(0, 10);
+    const seriesName = chart.data.datasets[datasetIdx].label;
+    if (seriesName === 'Production Bugs') {{
+      const url = "https://29022131.atlassian.net/issues?jql=project%20%3D%20ACT%0AAND%20created%20%3E%3D%20%22" + fmt(startDate) + "%22%0AAND%20created%20%3C%3D%20%22" + fmt(endDate) + "%22%0AAND%20issueType%20IN%20%28bug%29%0AAND%20%22Environment%5BDropdown%5D%22%20%3D%20production%0AAND%20component%20%3D%20DEMAND%0AAND%20status%20%21%3D%20CANCELED%0AAND%20%22Severity%5BDropdown%5D%22%20IN%20%28Major%2C%20Minor%29";
+      window.open(url, '_blank');
+    }} else if (seriesName === 'Production Incidents') {{
+      const from_ts = startDate.getTime();
+      const to_ts = endDate.getTime() + 86400000 - 1;
+      const url = "https://app.datadoghq.com/incidents?query=Domain%3A%28ast%20OR%20acd%20OR%20asi%29%20-incident_closure%3A%22False%20Positive%22%20incident_cause%3A%28Bug%20OR%20%22Configuration%20Issue%22%20OR%20%22Load%2FCapacity%20Issue%22%29%20-severity%3ASEV-3&from_ts=" + from_ts + "&to_ts=" + to_ts;
+      window.open(url, '_blank');
+    }}
+  }};
+  chart.canvas.addEventListener('click', chart._clickHandler);
+}}
+
 function filterWeek(week) {{}}
 
-// Initial render
+// Initial render (filterRange already calls addProductionClickHandler internally)
 filterRange();
 </script>
 </body>
