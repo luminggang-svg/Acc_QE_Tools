@@ -812,6 +812,15 @@ def generate_html(labels, datasets, record_ids, domain, output_path, ams_data=No
   </div>
 </div>
 """
+    narrative_html = """
+<div class="ai-narrative" id="aiNarrative">
+  <h2>AI Analysis <span id="aiPeriodLabel" style="font-weight:normal;font-size:0.8em;color:#888"></span></h2>
+  <div class="ai-narrative-text" id="aiNarrativeText"></div>
+  <div class="ai-error" id="aiError"></div>
+  <button class="ai-btn" id="aiBtn" onclick="generateAnalysis()">Generate Analysis</button>
+  <span class="ai-spinner" id="aiSpinner">Generating...</span>
+</div>
+"""
     table_headers = ["Week"] + [m for m in METRICS]
     table_rows_js = []
     for i, label in enumerate(labels):
@@ -863,6 +872,15 @@ canvas {{ max-height: 320px; }}
 .sub-bar-fill {{ height: 10px; border-radius: 3px; }}
 .efficiency-tier {{ display: inline-block; padding: 2px 10px; border-radius: 10px; font-size: 12px; font-weight: bold; background: #e3f2fd; color: #1565c0; margin-top: 8px; }}
 .unavailable {{ color: #aaa; font-style: italic; font-size: 0.9em; }}
+.ai-narrative {{ background: white; border-radius: 8px; padding: 24px; margin: 20px 0; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }}
+.ai-narrative h2 {{ margin-top: 0; }}
+.ai-narrative-text {{ line-height: 1.7; color: #333; white-space: pre-wrap; font-size: 14px; }}
+.ai-narrative-text h3 {{ color: #9C27B0; margin: 16px 0 6px; font-size: 1em; }}
+.ai-btn {{ background: #9C27B0; color: white; border: none; padding: 10px 20px; border-radius: 6px; cursor: pointer; font-size: 14px; margin-top: 12px; }}
+.ai-btn:hover {{ background: #7B1FA2; }}
+.ai-btn:disabled {{ background: #ccc; cursor: default; }}
+.ai-spinner {{ display:none; margin-left: 10px; color: #9C27B0; font-size: 13px; }}
+.ai-error {{ color: #c62828; font-size: 13px; margin-top: 8px; }}
 </style>
 </head>
 <body>
@@ -881,6 +899,8 @@ canvas {{ max-height: 320px; }}
 </div>
 
 {ams_overview_html}
+
+{narrative_html}
 
 {chart_divs}
 
@@ -959,6 +979,7 @@ function filterRange() {{
   }});
 
   updateAmsOverview(end);
+  updateNarrativePanel(end);
 }}
 
 function addProductionClickHandler() {{
@@ -1096,6 +1117,103 @@ function efficiencyTier(h) {{
   if (h <= 100) return 'Advanced';
   if (h <= 150) return 'Developing';
   return 'Initial';
+}}
+
+let currentNarrativePeriod = null;
+
+function narrativeCacheKey(period) {{
+  return 'ams_narrative_' + DOMAIN + '_' + period;
+}}
+
+function updateNarrativePanel(toIdx) {{
+  const toLabel = allLabels[toIdx];
+  currentNarrativePeriod = toLabel;
+  document.getElementById('aiPeriodLabel').textContent = '— ' + toLabel;
+  document.getElementById('aiError').textContent = '';
+
+  const cached = localStorage.getItem(narrativeCacheKey(toLabel));
+  if (cached) {{
+    renderNarrative(cached);
+    document.getElementById('aiBtn').textContent = 'Regenerate';
+    return;
+  }}
+  document.getElementById('aiNarrativeText').textContent = '';
+  document.getElementById('aiBtn').textContent = 'Generate Analysis';
+
+  if (toLabel === allLabels[allLabels.length - 1] && !cached) {{
+    generateAnalysis();
+  }}
+}}
+
+function renderNarrative(text) {{
+  const formatted = text.replace(/^(How AMS is Calculated|This Period's Breakdown|Key Movers|Action Items)$/gm, '<h3>$1</h3>');
+  document.getElementById('aiNarrativeText').innerHTML = formatted;
+}}
+
+async function generateAnalysis() {{
+  if (!PROXY_PORT) {{
+    document.getElementById('aiError').textContent = 'Proxy not running. Start the script to enable AI analysis.';
+    return;
+  }}
+  const toLabel = currentNarrativePeriod;
+  const entry = amsData.find(d => d.end_date === toLabel);
+  if (!entry) return;
+  const prevIdx = amsData.findIndex(d => d.end_date === toLabel) - 1;
+  const prev = prevIdx >= 0 ? amsData[prevIdx] : null;
+
+  document.getElementById('aiBtn').disabled = true;
+  document.getElementById('aiSpinner').style.display = 'inline';
+  document.getElementById('aiError').textContent = '';
+  document.getElementById('aiNarrativeText').textContent = '';
+
+  const body = {{
+    period: toLabel,
+    domain: DOMAIN,
+    current: entry,
+    previous: prev,
+    baseline: entry.baseline || {{}},
+  }};
+
+  try {{
+    const resp = await fetch(`http://localhost:${{PROXY_PORT}}/analyze`, {{
+      method: 'POST',
+      headers: {{ 'Content-Type': 'application/json' }},
+      body: JSON.stringify(body),
+    }});
+    if (!resp.ok) {{
+      const err = await resp.json().catch(() => ({{error: 'Unknown error'}}));
+      throw new Error(err.error || `HTTP ${{resp.status}}`);
+    }}
+
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let fullText = '';
+    while (true) {{
+      const {{ done, value }} = await reader.read();
+      if (done) break;
+      const chunk = decoder.decode(value, {{ stream: true }});
+      for (const line of chunk.split('\n')) {{
+        if (!line.startsWith('data: ')) continue;
+        const data = line.slice(6).trim();
+        if (data === '[DONE]') continue;
+        try {{
+          const parsed = JSON.parse(data);
+          const delta = parsed.choices?.[0]?.delta?.content;
+          if (delta) {{
+            fullText += delta;
+            renderNarrative(fullText);
+          }}
+        }} catch (_) {{}}
+      }}
+    }}
+    localStorage.setItem(narrativeCacheKey(toLabel), fullText);
+    document.getElementById('aiBtn').textContent = 'Regenerate';
+  }} catch (e) {{
+    document.getElementById('aiError').textContent = 'Error: ' + e.message;
+  }} finally {{
+    document.getElementById('aiBtn').disabled = false;
+    document.getElementById('aiSpinner').style.display = 'none';
+  }}
 }}
 
 // Initial render (filterRange already calls addProductionClickHandler internally)
