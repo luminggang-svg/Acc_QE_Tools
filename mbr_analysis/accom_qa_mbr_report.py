@@ -200,6 +200,86 @@ def fetch_all_tables():
     return results
 
 
+def parse_child_table(raw_output, domain_filter):
+    """Parse a child table's markdown output into a dict keyed by End Date string (YYYY-MM-DD).
+    Each value is a dict of {column_name: value_string}.
+    Returns empty dict if raw_output is None or unparseable."""
+    if not raw_output:
+        return {}
+    lines = raw_output.splitlines()
+    header_line = None
+    data_lines = []
+    for line in lines:
+        if line.startswith("| _record_id"):
+            header_line = line
+        elif line.startswith("| ---"):
+            continue
+        elif line.startswith("| rec") and header_line:
+            data_lines.append(line)
+    if not header_line:
+        return {}
+
+    # Parse column names from header
+    headers = [h.strip() for h in header_line.split("|")[1:-1]]
+
+    result = {}
+    for row in data_lines:
+        cols = [c.strip() for c in row.split("|")[1:-1]]
+        if len(cols) < len(headers):
+            cols += [""] * (len(headers) - len(cols))
+        row_dict = dict(zip(headers, cols))
+
+        # Check domain match
+        domain_val = row_dict.get("Domain", "")
+        if domain_filter not in domain_val:
+            continue
+
+        # Extract End Date key (YYYY-MM-DD)
+        end_raw = row_dict.get("End Date", "")
+        if not end_raw.strip():
+            continue
+        end_key = end_raw.strip()[:10]
+        result[end_key] = row_dict
+    return result
+
+
+def parse_baseline_table(raw_output, domain_filter):
+    """Parse the Baseline table into a single dict {field: value} for the domain."""
+    if not raw_output:
+        return {}
+    lines = raw_output.splitlines()
+    header_line = None
+    for line in lines:
+        if line.startswith("| _record_id"):
+            header_line = line
+        elif line.startswith("| ---"):
+            continue
+        elif line.startswith("| rec") and header_line:
+            cols = [c.strip() for c in line.split("|")[1:-1]]
+            headers = [h.strip() for h in header_line.split("|")[1:-1]]
+            if len(cols) < len(headers):
+                cols += [""] * (len(headers) - len(cols))
+            row_dict = dict(zip(headers, cols))
+            domain_val = row_dict.get("Domain", "")
+            if domain_filter in domain_val:
+                return row_dict
+    return {}
+
+
+def join_enriched_records(main_records, child_data, baseline, domain_filter):
+    """Join main records with child table data by End Date key.
+    Returns list of enriched dicts, one per period, sorted by End Date."""
+    enriched = []
+    for rec in main_records:
+        end_key = rec[COL_MAP["End Date"]][:10]
+        row = {"_end_date": end_key, "_record": rec}
+        for table_label, table_dict in child_data.items():
+            row[table_label] = table_dict.get(end_key, {})
+        row["baseline"] = baseline
+        enriched.append(row)
+    return enriched
+
+
 def parse_records(raw_output, domain_filter="Accommodation"):
     """Parse markdown table output into structured data."""
     lines = raw_output.splitlines()
