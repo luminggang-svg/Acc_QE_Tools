@@ -374,6 +374,196 @@ def efficiency_tier_label(manual_hours):
     return "Initial"
 
 
+DEFAULT_SYSTEM_PROMPT = (
+    "You are a QA metrics analyst explaining Automation Maturity Score (AMS) results "
+    "to engineering leadership. Be concise, factual, and specific. Use plain English, "
+    "not math notation. Structure your response in exactly four sections with these "
+    'headers: "How AMS is Calculated", "This Period\'s Breakdown", "Key Movers", '
+    '"Action Items". Each section should be 3-6 sentences. Do not use bullet points — '
+    "write in paragraphs."
+)
+
+
+def load_system_prompt():
+    """Load system prompt from prompts/ams_system_prompt.txt (fallback to default).
+    Appends all *.md files from prompts/knowledge/ as a knowledge base section."""
+    script_dir = Path(__file__).parent
+    prompt_file = script_dir / "prompts" / "ams_system_prompt.txt"
+
+    if prompt_file.exists():
+        prompt = prompt_file.read_text(encoding="utf-8").strip()
+    else:
+        prompt = DEFAULT_SYSTEM_PROMPT
+
+    knowledge_dir = script_dir / "prompts" / "knowledge"
+    if knowledge_dir.exists():
+        kb_files = sorted(knowledge_dir.glob("*.md"))
+        if kb_files:
+            kb_sections = []
+            for f in kb_files:
+                kb_sections.append(f"### {f.stem}\n{f.read_text(encoding='utf-8').strip()}")
+            prompt += "\n\n## Knowledge Base\n\n" + "\n\n".join(kb_sections)
+    return prompt
+
+
+class ProxyHandler(http.server.BaseHTTPRequestHandler):
+    """Local proxy that forwards /analyze requests to LiteLLM."""
+
+    system_prompt = ""   # set by start_proxy_server() before first request
+
+    def log_message(self, fmt, *args):
+        pass  # suppress default access log noise
+
+    def _cors_headers(self):
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+
+    def do_OPTIONS(self):
+        self.send_response(200)
+        self._cors_headers()
+        self.end_headers()
+
+    def do_POST(self):
+        if self.path != "/analyze":
+            self.send_response(404)
+            self._cors_headers()
+            self.end_headers()
+            return
+
+        # Check config
+        if not LITELLM_API_KEY or not LITELLM_BASE_URL:
+            self.send_response(503)
+            self._cors_headers()
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps({
+                "error": "LiteLLM not configured. Set LITELLM_API_KEY and LITELLM_BASE_URL in the script."
+            }).encode())
+            return
+
+        # Read request body
+        length = int(self.headers.get("Content-Length", 0))
+        body = json.loads(self.rfile.read(length))
+
+        current = body.get("current", {})
+        previous = body.get("previous")
+        baseline = body.get("baseline", {})
+        domain = body.get("domain", "")
+        period = body.get("period", "")
+
+        # Build user message
+        user_msg = (
+            f"Domain: {domain}\n"
+            f"Period end date: {period}\n"
+            f"Final AMS score: {current.get('ams_score')}\n"
+            f"Maturity level: {ams_maturity_label(current.get('ams_score'))}\n\n"
+            f"Pillar scores:\n"
+            f"  Coverage ({current.get('coverage_score')} / 100, weight 40%)\n"
+            f"    Backend Coverage ({current.get('backend_coverage')} / 100, weight 60% of Coverage)\n"
+            f"      Unit Test: {_pct(current.get('be_unit'))}  [weight 35%]\n"
+            f"      Contract Test: {_pct(current.get('be_contract'))}  [weight 35%]\n"
+            f"      Intra-Service: {_pct(current.get('be_intra'))}  [weight 10%]\n"
+            f"      Inter-Service: {_pct(current.get('be_inter'))}  [weight 15%]\n"
+            f"      API E2E: {_pct(current.get('be_api_e2e'))}  [weight 5%]\n"
+            f"    Mobile Coverage ({current.get('mobile_coverage_s')} / 100, weight 20% of Coverage)\n"
+            f"      Unit Test: {_pct(current.get('mob_unit'))}  [weight 30%]\n"
+            f"      Integration: {_pct(current.get('mob_integration'))}  [weight 20%]\n"
+            f"      E2E: {_pct(current.get('mob_e2e'))}  [weight 50%]\n"
+            f"    Web Coverage ({current.get('web_coverage_s')} / 100, weight 20% of Coverage)\n"
+            f"      Unit Test: {_pct(current.get('web_unit'))}  [weight 30%]\n"
+            f"      Component: {_pct(current.get('web_component'))}  [weight 20%]\n"
+            f"      E2E: {_pct(current.get('web_e2e'))}  [weight 50%]\n"
+            f"  Reliability ({current.get('reliability_score')} / 100, weight 30%)\n"
+            f"    Backend Stability: {_pct(current.get('backend_stability'))}  [weight 50%]\n"
+            f"    Mobile Stability: {_pct(current.get('mobile_stability'))}  [weight 25%]\n"
+            f"    Web Stability: {_pct(current.get('web_stability'))}  [weight 25%]\n"
+            f"  Efficiency ({current.get('efficiency_score')} / 100, weight 30%)\n"
+            f"    Manual Hours: {current.get('manual_hours')} (baseline: {baseline.get('Manual Effort Baseline', 'N/A')})\n"
+            f"    Tier: {efficiency_tier_label(current.get('manual_hours'))}\n"
+        )
+
+        if previous:
+            user_msg += (
+                f"\nPrevious period ({previous.get('end_date')}) for comparison:\n"
+                f"  AMS: {previous.get('ams_score')}\n"
+                f"  Coverage: {previous.get('coverage_score')}, "
+                f"Reliability: {previous.get('reliability_score')}, "
+                f"Efficiency: {previous.get('efficiency_score')}\n"
+                f"  BE Unit: {_pct(previous.get('be_unit'))}, "
+                f"BE Contract: {_pct(previous.get('be_contract'))}, "
+                f"BE Inter: {_pct(previous.get('be_inter'))}, "
+                f"BE Intra: {_pct(previous.get('be_intra'))}\n"
+                f"  Manual Hours: {previous.get('manual_hours')}\n"
+            )
+        else:
+            user_msg += "\nNo previous period available (this is the earliest record).\n"
+
+        payload = json.dumps({
+            "model": LITELLM_MODEL,
+            "messages": [
+                {"role": "system", "content": ProxyHandler.system_prompt},
+                {"role": "user",   "content": user_msg},
+            ],
+            "stream": True,
+        }).encode()
+
+        req = urllib.request.Request(
+            f"{LITELLM_BASE_URL.rstrip('/')}/chat/completions",
+            data=payload,
+            headers={
+                "Authorization": f"Bearer {LITELLM_API_KEY}",
+                "Content-Type": "application/json",
+            },
+            method="POST",
+        )
+
+        try:
+            with urllib.request.urlopen(req, timeout=120) as resp:
+                self.send_response(200)
+                self._cors_headers()
+                self.send_header("Content-Type", "text/event-stream")
+                self.send_header("Transfer-Encoding", "chunked")
+                self.end_headers()
+                for line in resp:
+                    self.wfile.write(line)
+                    self.wfile.flush()
+        except urllib.error.HTTPError as e:
+            body_err = e.read().decode(errors="replace")
+            self.send_response(e.code)
+            self._cors_headers()
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps({"error": f"LiteLLM HTTP {e.code}: {body_err[:300]}"}).encode())
+        except Exception as e:
+            self.send_response(500)
+            self._cors_headers()
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps({"error": str(e)}).encode())
+
+
+def _pct(val):
+    """Format a 0-1 decimal as a percentage string, or return 'N/A'."""
+    if val is None:
+        return "N/A"
+    return f"{val * 100:.1f}%"
+
+
+def start_proxy_server():
+    """Start the LiteLLM proxy on a random available port. Returns the port number."""
+    ProxyHandler.system_prompt = load_system_prompt()
+    with socketserver.TCPServer(("localhost", 0), ProxyHandler) as httpd:
+        port = httpd.server_address[1]
+    # Re-create with the known port so it doesn't close immediately
+    server = socketserver.TCPServer(("localhost", port), ProxyHandler)
+    server.allow_reuse_address = True
+    t = threading.Thread(target=server.serve_forever, daemon=True)
+    t.start()
+    print(f"Proxy server running at http://localhost:{port} (Ctrl+C to stop)")
+    return port
+
+
 def parse_records(raw_output, domain_filter="Accommodation"):
     """Parse markdown table output into structured data."""
     lines = raw_output.splitlines()
