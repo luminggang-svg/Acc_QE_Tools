@@ -514,8 +514,16 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
             self.wfile.write(json.dumps({"error": str(e)}).encode())
 
 
+PROXY_IDLE_TIMEOUT = 7200  # seconds — proxy auto-shuts down after 2h of inactivity
+
+
 def start_proxy_server():
-    """Start the LiteLLM proxy on a random available port. Returns the port number."""
+    """Start the LiteLLM proxy on a random available port. Returns the port number.
+
+    The server runs as a daemon thread and shuts itself down automatically after
+    PROXY_IDLE_TIMEOUT seconds of inactivity, freeing the port without requiring
+    the user to manually kill the process.
+    """
     ProxyHandler.system_prompt = load_system_prompt()
 
     class _ReuseAddrServer(socketserver.TCPServer):
@@ -523,9 +531,28 @@ def start_proxy_server():
 
     server = _ReuseAddrServer(("localhost", 0), ProxyHandler)
     port = server.server_address[1]
-    t = threading.Thread(target=server.serve_forever, daemon=True)
+
+    def _serve_with_timeout():
+        server.timeout = PROXY_IDLE_TIMEOUT
+        while True:
+            # handle_request returns False (via select timeout) after server.timeout
+            # seconds with no incoming connection — we use that as our idle signal.
+            ready = server.socket.fileno() != -1  # sanity check
+            if not ready:
+                break
+            import select
+            r, _, _ = select.select([server.socket], [], [], PROXY_IDLE_TIMEOUT)
+            if not r:
+                # No activity for PROXY_IDLE_TIMEOUT seconds — shut down cleanly
+                print(f"\nProxy server idle for {PROXY_IDLE_TIMEOUT // 60}min, shutting down and freeing port {port}.")
+                server.server_close()
+                break
+            server.handle_request()
+
+    t = threading.Thread(target=_serve_with_timeout, daemon=True)
     t.start()
-    print(f"Proxy server running at http://localhost:{port} (Ctrl+C to stop)")
+    print(f"Proxy server running at http://localhost:{port} "
+          f"(auto-closes after {PROXY_IDLE_TIMEOUT // 60}min idle, or Ctrl+C)")
     return port
 
 
