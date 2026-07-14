@@ -553,11 +553,9 @@ def _pct(val):
 def start_proxy_server():
     """Start the LiteLLM proxy on a random available port. Returns the port number."""
     ProxyHandler.system_prompt = load_system_prompt()
-    with socketserver.TCPServer(("localhost", 0), ProxyHandler) as httpd:
-        port = httpd.server_address[1]
-    # Re-create with the known port so it doesn't close immediately
-    server = socketserver.TCPServer(("localhost", port), ProxyHandler)
+    server = socketserver.TCPServer(("localhost", 0), ProxyHandler)
     server.allow_reuse_address = True
+    port = server.server_address[1]
     t = threading.Thread(target=server.serve_forever, daemon=True)
     t.start()
     print(f"Proxy server running at http://localhost:{port} (Ctrl+C to stop)")
