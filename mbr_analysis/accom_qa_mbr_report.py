@@ -1181,7 +1181,7 @@ async function generateAnalysis() {{
       const {{ done, value }} = await reader.read();
       if (done) break;
       const chunk = decoder.decode(value, {{ stream: true }});
-      for (const line of chunk.split('\n')) {{
+      for (const line of chunk.split('\\n')) {{
         if (!line.startsWith('data: ')) continue;
         const data = line.slice(6).trim();
         if (data === '[DONE]') continue;
