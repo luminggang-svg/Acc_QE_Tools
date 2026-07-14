@@ -822,10 +822,14 @@ def generate_html(labels, start_dates, datasets, record_ids, domain, output_path
         },
     ]
 
-    # Build chart containers
-    chart_divs = "\n".join(
+    # Build chart containers — AMS chart separate so it can be placed near the breakdown
+    ams_chart_div = ''.join(
         f'<div class="chart-container"><h2>{g["title"]}</h2><canvas id="{g["id"]}"></canvas></div>'
-        for g in chart_groups
+        for g in chart_groups if g["id"] == "chart3"
+    )
+    other_chart_divs = "\n".join(
+        f'<div class="chart-container"><h2>{g["title"]}</h2><canvas id="{g["id"]}"></canvas></div>'
+        for g in chart_groups if g["id"] != "chart3"
     )
 
     now = datetime.now().strftime("%Y-%m-%d %H:%M")
@@ -880,7 +884,7 @@ def generate_html(labels, start_dates, datasets, record_ids, domain, output_path
 """
     narrative_html = """
 <div class="ai-narrative" id="aiNarrative">
-  <h2>AI Analysis <span id="aiPeriodLabel" style="font-weight:normal;font-size:0.8em;color:#888"></span></h2>
+  <h2>AI Analysis for AMS <span id="aiPeriodLabel" style="font-weight:normal;font-size:0.8em;color:#888"></span></h2>
   <div class="ai-narrative-text" id="aiNarrativeText"></div>
   <div class="ai-error" id="aiError"></div>
   <button class="ai-btn" id="aiBtn" onclick="generateAnalysis()">Generate Analysis</button>
@@ -966,9 +970,11 @@ canvas {{ max-height: 320px; }}
 
 {ams_overview_html}
 
+{ams_chart_div}
+
 {narrative_html}
 
-{chart_divs}
+{other_chart_divs}
 
 <h2 style="margin-top:30px;">Raw Data (click values to view in Lark Base)</h2>
 <table class="data-table" id="dataTable">
