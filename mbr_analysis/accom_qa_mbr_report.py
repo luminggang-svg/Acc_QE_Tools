@@ -280,6 +280,100 @@ def join_enriched_records(main_records, child_data, baseline, domain_filter):
     return enriched
 
 
+def extract_ams_data(enriched_records):
+    """Extract AMS pillar and sub-component data from enriched records.
+    Returns list of dicts, one per period, with all AMS fields as floats (None if missing)."""
+    result = []
+    for row in enriched_records:
+        ams = row.get("ams", {})
+        be  = row.get("backend_coverage", {})
+        mob = row.get("mobile_coverage", {})
+        web = row.get("web_coverage", {})
+        ae  = row.get("auto_effectiveness", {})
+        bl  = row.get("baseline", {})
+        rec = row["_record"]
+
+        def n(d, k):
+            """Parse float from dict value, return None if missing/unparseable."""
+            v = d.get(k, "")
+            if not v or not str(v).strip():
+                return None
+            s = str(v).strip().replace("%", "").replace(",", "")
+            try:
+                return float(s)
+            except ValueError:
+                return None
+
+        entry = {
+            "end_date": row["_end_date"],
+            # AMS table — pillar scores
+            "ams_score":          n(ams, "Automation Maturity Score"),
+            "coverage_score":     n(ams, "Coverage"),
+            "reliability_score":  n(ams, "Reliability"),
+            "efficiency_score":   n(ams, "Efficiency"),
+            "backend_coverage":   n(ams, "Backend Coverage"),
+            "mobile_coverage_s":  n(ams, "Mobile Coverage"),
+            "web_coverage_s":     n(ams, "Web Coverage"),
+            "backend_stability":  n(ams, "Backend Stability"),
+            "mobile_stability":   n(ams, "Mobile Stability"),
+            "web_stability":      n(ams, "Web Stability"),
+            # Backend Coverage sub-components (stored as 0-1 decimals)
+            "be_unit":            n(be, "Backend Unit Test"),
+            "be_contract":        n(be, "Backend Contract Test"),
+            "be_intra":           n(be, "Backend Intra-Service"),
+            "be_inter":           n(be, "Backend Inter-Service"),
+            "be_api_e2e":         n(be, "Backend API E2E"),
+            # Mobile Coverage sub-components (0-1)
+            "mob_unit":           n(mob, "Unit Tests"),
+            "mob_integration":    n(mob, "Integration Tests"),
+            "mob_e2e":            n(mob, "E2E Tests"),
+            # Web Coverage sub-components (0-1)
+            "web_unit":           n(web, "Unit Tests"),
+            "web_component":      n(web, "Component Tests"),
+            "web_e2e":            n(web, "E2E Tests"),
+            # Automation Effectiveness per platform (0-1)
+            "ae_backend":         n(ae, "Backend Automation Effectiveness"),
+            "ae_mobile":          n(ae, "Mobile Automation Effectiveness"),
+            "ae_web":             n(ae, "Web Automation Effectiveness"),
+            # Manual hours (from main record)
+            "manual_hours":       parse_num(rec[COL_MAP["Manual Hours"]]),
+            # Baseline
+            "baseline_hours":     n(bl, "Manual Effort Baseline"),
+        }
+        result.append(entry)
+    return result
+
+
+def ams_maturity_label(score):
+    """Return maturity level label for a given AMS score."""
+    if score is None:
+        return "N/A"
+    if score >= 81:
+        return "Level 5: Optimizing"
+    if score >= 61:
+        return "Level 4: Measured"
+    if score >= 41:
+        return "Level 3: Defined"
+    if score >= 21:
+        return "Level 2: Emerging"
+    return "Level 1: Initial"
+
+
+def efficiency_tier_label(manual_hours):
+    """Return efficiency tier label based on manual hours."""
+    if manual_hours is None:
+        return "N/A"
+    if manual_hours <= 50:
+        return "Optimized"
+    if manual_hours <= 100:
+        return "Advanced"
+    if manual_hours <= 150:
+        return "Developing"
+    if manual_hours <= 200:
+        return "Initial"
+    return "Initial"
+
+
 def parse_records(raw_output, domain_filter="Accommodation"):
     """Parse markdown table output into structured data."""
     lines = raw_output.splitlines()
