@@ -35,6 +35,10 @@ LITELLM_API_KEY  = "sk-fxYlNgQYTiGTg8ylEHbHIg"   # your company LiteLLM API key
 LITELLM_BASE_URL = "https://litellm.tvlk.cloud"   # e.g. https://litellm.yourcompany.com
 LITELLM_MODEL    = "claude-sonnet-4.6"
 
+# Proxy port — fixed so the HTML can always reach the proxy regardless of when it was generated.
+# Change this if the port is already in use on your machine.
+PROXY_PORT_FIXED = 18234
+
 # Child table IDs
 TABLE_AMS                = "tblPLbLZqbJoSXS4"
 TABLE_BACKEND_COVERAGE   = "tbl3ffKbMhKz3Bs6"
@@ -556,8 +560,16 @@ def start_proxy_server():
     class _ReuseAddrServer(socketserver.TCPServer):
         allow_reuse_address = True
 
-    server = _ReuseAddrServer(("localhost", 0), ProxyHandler)
-    port = server.server_address[1]
+    # Try fixed port first so existing HTML files can reconnect to a new proxy run.
+    # Fall back to a random port if the fixed port is already occupied.
+    try:
+        server = _ReuseAddrServer(("localhost", PROXY_PORT_FIXED), ProxyHandler)
+        port = PROXY_PORT_FIXED
+    except OSError:
+        server = _ReuseAddrServer(("localhost", 0), ProxyHandler)
+        port = server.server_address[1]
+        print(f"  Note: fixed port {PROXY_PORT_FIXED} was busy, using random port {port} instead.")
+        print(f"  To use the fixed port, stop any other process on {PROXY_PORT_FIXED} or change PROXY_PORT_FIXED in the script.")
 
     def _serve_with_timeout():
         server.timeout = PROXY_IDLE_TIMEOUT
@@ -1067,17 +1079,21 @@ function updateAmsOverview(toIdx) {{
   }}
 
   const cov = entry.coverage_score, rel = entry.reliability_score, eff = entry.efficiency_score;
-  const covC = cov !== null ? (cov * 0.40).toFixed(1) : '—';
-  const relC = rel !== null ? (rel * 0.30).toFixed(1) : '—';
-  const effC = eff !== null ? (eff * 0.30).toFixed(1) : '—';
+  // Pillar scores are stored as 0-1 fractions; multiply by 100 for display
+  const cov100 = cov !== null ? cov * 100 : null;
+  const rel100 = rel !== null ? rel * 100 : null;
+  const eff100 = eff !== null ? eff * 100 : null;
+  const covC = cov100 !== null ? (cov100 * 0.40).toFixed(1) : '—';
+  const relC = rel100 !== null ? (rel100 * 0.30).toFixed(1) : '—';
+  const effC = eff100 !== null ? (eff100 * 0.30).toFixed(1) : '—';
   document.getElementById('covContrib').textContent = covC + ' pts';
   document.getElementById('relContrib').textContent = relC + ' pts';
   document.getElementById('effContrib').textContent = effC + ' pts';
-  document.getElementById('covBar').style.width = (cov !== null ? Math.min(100, cov) : 0) + '%';
-  document.getElementById('relBar').style.width = (rel !== null ? Math.min(100, rel) : 0) + '%';
-  document.getElementById('effBar').style.width = (eff !== null ? Math.min(100, eff) : 0) + '%';
+  document.getElementById('covBar').style.width = (cov100 !== null ? Math.min(100, cov100) : 0) + '%';
+  document.getElementById('relBar').style.width = (rel100 !== null ? Math.min(100, rel100) : 0) + '%';
+  document.getElementById('effBar').style.width = (eff100 !== null ? Math.min(100, eff100) : 0) + '%';
 
-  document.getElementById('covScore').textContent = cov !== null ? cov.toFixed(1) : '—';
+  document.getElementById('covScore').textContent = cov100 !== null ? cov100.toFixed(1) : '—';
   document.getElementById('covContribDetail').textContent = `Contributes ${{covC}} pts to AMS`;
   document.getElementById('covSubBars').innerHTML =
     '<b style="font-size:11px;color:#888">Backend (60%)</b>' +
@@ -1095,14 +1111,14 @@ function updateAmsOverview(toIdx) {{
     subBar('Component', entry.web_component, '20%', '#CDDC39') +
     subBar('E2E', entry.web_e2e, '50%', '#CDDC39');
 
-  document.getElementById('relScore').textContent = rel !== null ? rel.toFixed(1) : '—';
+  document.getElementById('relScore').textContent = rel100 !== null ? rel100.toFixed(1) : '—';
   document.getElementById('relContribDetail').textContent = `Contributes ${{relC}} pts to AMS`;
   document.getElementById('relSubBars').innerHTML =
-    subBar('Backend Stability', entry.backend_stability !== null ? entry.backend_stability / 100 : null, '50%', '#2196F3') +
-    subBar('Mobile Stability',  entry.mobile_stability  !== null ? entry.mobile_stability  / 100 : null, '25%', '#2196F3') +
-    subBar('Web Stability',     entry.web_stability     !== null ? entry.web_stability     / 100 : null, '25%', '#2196F3');
+    subBar('Backend Stability', entry.backend_stability, '50%', '#2196F3') +
+    subBar('Mobile Stability',  entry.mobile_stability,  '25%', '#2196F3') +
+    subBar('Web Stability',     entry.web_stability,     '25%', '#2196F3');
 
-  document.getElementById('effScore').textContent = eff !== null ? eff.toFixed(1) : '—';
+  document.getElementById('effScore').textContent = eff100 !== null ? eff100.toFixed(1) : '—';
   document.getElementById('effContribDetail').textContent = `Contributes ${{effC}} pts to AMS`;
   const bl = entry.baseline_hours;
   const mh = entry.manual_hours;
