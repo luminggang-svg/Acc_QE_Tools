@@ -36,6 +36,39 @@ The script connects to a specific Lark Base table. These values are hardcoded at
 
 To point at a different Lark Base, update these constants in the script.
 
+### LiteLLM Configuration (AI Narrative)
+
+To enable the AI narrative panel, set these values in `accom_qa_mbr_report.py`:
+
+| Variable | Description |
+|----------|-------------|
+| `LITELLM_API_KEY` | Your company LiteLLM API key |
+| `LITELLM_BASE_URL` | Your LiteLLM endpoint (e.g. `https://litellm.yourcompany.com`) |
+| `LITELLM_MODEL` | Model to use (default: `claude-sonnet-4.6`) |
+
+The proxy server starts automatically every time the script runs and listens on a random local port. The port is printed to the terminal.
+
+If `LITELLM_API_KEY` or `LITELLM_BASE_URL` are empty, the proxy still starts but the "Generate Analysis" button will show a configuration error.
+
+### Customizing the AI Prompt
+
+Edit `prompts/ams_system_prompt.txt` to change the system prompt without touching Python code.
+
+Add `.md` files to `prompts/knowledge/` to inject additional context into every AI analysis call. Files are loaded alphabetically. Example: `prompts/knowledge/team_context.md`.
+
+### AMS Child Tables
+
+The script fetches these additional tables to power the AMS breakdown section:
+
+| Table | ID | Purpose |
+|-------|----|---------|
+| AMS | `tblPLbLZqbJoSXS4` | Final score + pillar scores |
+| Backend Coverage | `tbl3ffKbMhKz3Bs6` | Unit/Contract/Intra/Inter/E2E |
+| Mobile Coverage | `tblqA5KCHCsUsvLR` | Unit/Integration/E2E |
+| Web Coverage | `tbltpndvAxB7wSBe` | Unit/Component/E2E |
+| Automation Effectiveness | `tblp9diZhqNOTz2I` | Per-platform AE |
+| Baseline | `tblIHopqxv7vvPGP` | Manual effort baseline |
+
 ## Usage
 
 ```bash
