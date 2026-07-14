@@ -1226,7 +1226,7 @@ function renderNarrative(text) {{
   formatted = formatted.replace(
     /(<h3>Action Items<\/h3>)([\s\S]*?)(?=<h3>|$)/,
     function(match, header, body) {{
-      const items = body.trim().split(/\n/).filter(l => l.trim());
+      const items = body.trim().split(/\\n/).filter(l => l.trim());
       const listItems = items.map(line => {{
         const clean = line.replace(/^\d+\.\s*/, '').trim();
         return clean ? '<li>' + clean + '</li>' : '';
