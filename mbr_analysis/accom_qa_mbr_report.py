@@ -162,11 +162,15 @@ def fetch_all_tables():
 
 
 def parse_child_table(raw_output, domain_filter):
-    """Parse a child table's markdown output into a dict keyed by End Date string (YYYY-MM-DD).
-    Each value is a dict of {column_name: value_string}.
-    Returns empty dict if raw_output is None or unparseable."""
+    """Parse a child table's markdown output into a list of row dicts for the domain.
+    Each row dict has {column_name: value_string} plus '_start' and '_end' (YYYY-MM-DD).
+    Returns empty list if raw_output is None or unparseable.
+
+    Child tables use monthly periods, so rows are matched to weekly main-table records
+    by range: start_date <= weekly_end_date <= end_date (see join_enriched_records).
+    """
     if not raw_output:
-        return {}
+        return []
     lines = raw_output.splitlines()
     header_line = None
     data_lines = []
@@ -178,30 +182,46 @@ def parse_child_table(raw_output, domain_filter):
         elif line.startswith("| rec") and header_line:
             data_lines.append(line)
     if not header_line:
-        return {}
+        return []
 
-    # Parse column names from header
     headers = [h.strip() for h in header_line.split("|")[1:-1]]
-
-    result = {}
+    result = []
     for row in data_lines:
         cols = [c.strip() for c in row.split("|")[1:-1]]
         if len(cols) < len(headers):
             cols += [""] * (len(headers) - len(cols))
         row_dict = dict(zip(headers, cols))
 
-        # Check domain match
         domain_val = row_dict.get("Domain", "")
         if domain_filter not in domain_val:
             continue
 
-        # Extract End Date key (YYYY-MM-DD)
-        end_raw = row_dict.get("End Date", "")
-        if not end_raw.strip():
+        end_raw   = row_dict.get("End Date", "").strip()
+        start_raw = row_dict.get("Start Date", "").strip()
+        if not end_raw:
             continue
-        end_key = end_raw.strip()[:10]
-        result[end_key] = row_dict
+        row_dict["_end"]   = end_raw[:10]
+        row_dict["_start"] = start_raw[:10] if start_raw else ""
+        result.append(row_dict)
     return result
+
+
+def _find_child_row(rows, weekly_end_date):
+    """Find the child table row whose period contains weekly_end_date.
+    Falls back to the row with the closest end date not before weekly_end_date."""
+    if not rows:
+        return {}
+    # Exact range match: _start <= weekly_end_date <= _end
+    for row in rows:
+        if row.get("_start") and row.get("_end"):
+            if row["_start"] <= weekly_end_date <= row["_end"]:
+                return row
+    # Fallback: latest row whose end date <= weekly_end_date
+    candidates = [r for r in rows if r.get("_end", "") <= weekly_end_date]
+    if candidates:
+        return max(candidates, key=lambda r: r["_end"])
+    # Last resort: earliest row
+    return min(rows, key=lambda r: r.get("_end", ""))
 
 
 def parse_baseline_table(raw_output, domain_filter):
@@ -228,14 +248,16 @@ def parse_baseline_table(raw_output, domain_filter):
 
 
 def join_enriched_records(main_records, child_data, baseline):
-    """Join main records with child table data by End Date key.
+    """Join main records with child table data by date range.
+    Child tables are monthly; main table is weekly — each weekly record is matched
+    to the child row whose Start Date <= weekly End Date <= End Date.
     Returns list of enriched dicts, one per period, in main_records order."""
     enriched = []
     for rec in main_records:
         end_key = rec[COL_MAP["End Date"]][:10]
         row = {"_end_date": end_key, "_record": rec}
-        for table_label, table_dict in child_data.items():
-            row[table_label] = table_dict.get(end_key, {})
+        for table_label, table_rows in child_data.items():
+            row[table_label] = _find_child_row(table_rows, end_key)
         row["baseline"] = baseline
         enriched.append(row)
     return enriched
@@ -267,35 +289,36 @@ def extract_ams_data(enriched_records):
 
         entry = {
             "end_date": row["_end_date"],
-            # AMS table — pillar scores
-            "ams_score":          n(ams, "Automation Maturity Score"),
+            # AMS table — field names as truncated by lark-cli markdown output
+            "ams_score":          n(ams, "Automation Maturity ..."),
             "coverage_score":     n(ams, "Coverage"),
             "reliability_score":  n(ams, "Reliability"),
             "efficiency_score":   n(ams, "Efficiency"),
-            "backend_coverage":   n(ams, "Backend Coverage"),
-            "mobile_coverage_s":  n(ams, "Mobile Coverage"),
-            "web_coverage_s":     n(ams, "Web Coverage"),
             "backend_stability":  n(ams, "Backend Stability"),
             "mobile_stability":   n(ams, "Mobile Stability"),
             "web_stability":      n(ams, "Web Stability"),
-            # Backend Coverage sub-components (stored as 0-1 decimals)
+            # Coverage scores from child tables (not AMS table — those are comma-separated lists)
+            "backend_coverage":   n(be,  "Backend Coverage"),
+            "mobile_coverage_s":  n(mob, "Mobile Coverage"),
+            "web_coverage_s":     n(web, "Web Coverage"),
+            # Backend Coverage sub-components — field names as truncated by lark-cli
             "be_unit":            n(be, "Backend Unit Test"),
-            "be_contract":        n(be, "Backend Contract Test"),
-            "be_intra":           n(be, "Backend Intra-Service"),
-            "be_inter":           n(be, "Backend Inter-Service"),
+            "be_contract":        n(be, "Backend Contract Tes..."),
+            "be_intra":           n(be, "Backend Intra-Servic..."),
+            "be_inter":           n(be, "Backend Inter-Servic..."),
             "be_api_e2e":         n(be, "Backend API E2E"),
-            # Mobile Coverage sub-components (0-1)
+            # Mobile Coverage sub-components
             "mob_unit":           n(mob, "Unit Tests"),
             "mob_integration":    n(mob, "Integration Tests"),
             "mob_e2e":            n(mob, "E2E Tests"),
-            # Web Coverage sub-components (0-1)
+            # Web Coverage sub-components
             "web_unit":           n(web, "Unit Tests"),
             "web_component":      n(web, "Component Tests"),
             "web_e2e":            n(web, "E2E Tests"),
             # Automation Effectiveness per platform (0-1)
-            "ae_backend":         n(ae, "Backend Automation Effectiveness"),
-            "ae_mobile":          n(ae, "Mobile Automation Effectiveness"),
-            "ae_web":             n(ae, "Web Automation Effectiveness"),
+            "ae_backend":         n(ae, "Backend Automation E..."),
+            "ae_mobile":          n(ae, "Mobile Automation Ef..."),
+            "ae_web":             n(ae, "Web Automation Effec..."),
             # Manual hours (from main record)
             "manual_hours":       parse_num(rec[COL_MAP["Manual Hours"]]),
             # Baseline
@@ -1198,7 +1221,10 @@ async function generateAnalysis() {{
     localStorage.setItem(narrativeCacheKey(toLabel), fullText);
     document.getElementById('aiBtn').textContent = 'Regenerate';
   }} catch (e) {{
-    document.getElementById('aiError').textContent = 'Error: ' + e.message;
+    const msg = e.message.includes('Failed to fetch') || e.message.includes('NetworkError')
+      ? 'Proxy not reachable — the report HTML must be opened from the same terminal session that generated it. Re-run the script and open the new HTML file.'
+      : 'Error: ' + e.message;
+    document.getElementById('aiError').textContent = msg;
   }} finally {{
     document.getElementById('aiBtn').disabled = false;
     document.getElementById('aiSpinner').style.display = 'none';
