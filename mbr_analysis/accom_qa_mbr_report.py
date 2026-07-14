@@ -1352,6 +1352,16 @@ def main():
         else:
             print(f"Open {args.output} in your browser.")
 
+    # Keep the process alive so the proxy thread stays running.
+    # The proxy handles AI analysis requests from the browser.
+    print(f"\nReport ready. Proxy is live at http://localhost:{proxy_port}")
+    print("Press Ctrl+C to stop.\n")
+    try:
+        while True:
+            time.sleep(60)
+    except KeyboardInterrupt:
+        print("\nStopped.")
+
 
 if __name__ == "__main__":
     main()
