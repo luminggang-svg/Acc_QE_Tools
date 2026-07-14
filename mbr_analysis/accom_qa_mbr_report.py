@@ -31,8 +31,8 @@ VIEW_ID = "vewhlHhNSt"
 IDENTITY = "user"
 
 # LiteLLM config — set these before running
-LITELLM_API_KEY  = ""   # your company LiteLLM API key
-LITELLM_BASE_URL = ""   # e.g. https://litellm.yourcompany.com
+LITELLM_API_KEY  = "sk-fxYlNgQYTiGTg8ylEHbHIg"   # your company LiteLLM API key
+LITELLM_BASE_URL = "https://litellm.tvlk.cloud"   # e.g. https://litellm.yourcompany.com
 LITELLM_MODEL    = "claude-sonnet-4.6"
 
 # Child table IDs
@@ -92,7 +92,7 @@ COL_MAP = {
 }
 
 
-def fetch_table_raw(table_id, label, results, errors, max_retries=3):
+def fetch_table_raw(table_id, label, results, errors, max_retries=3, view_id=None):
     """Fetch all records from a Lark Base table into results[label]. Non-fatal on error."""
     cmd = [
         "lark-cli", "base", "+record-list",
@@ -101,6 +101,8 @@ def fetch_table_raw(table_id, label, results, errors, max_retries=3):
         "--table-id", table_id,
         "--limit", "200",
     ]
+    if view_id:
+        cmd += ["--view-id", view_id]
     for attempt in range(1, max_retries + 1):
         try:
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
@@ -141,9 +143,11 @@ def fetch_all_tables():
     threads = []
     for label, table_id in tables.items():
         print(f"  Fetching {label} table ({table_id})...")
+        view_id = VIEW_ID if label == "main" else None
         t = threading.Thread(
             target=fetch_table_raw,
             args=(table_id, label, results, errors),
+            kwargs={"view_id": view_id},
             daemon=True,
         )
         threads.append(t)
