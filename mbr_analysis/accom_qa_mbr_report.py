@@ -340,6 +340,8 @@ def extract_ams_data(enriched_records):
             "manual_hours":       parse_num(rec[COL_MAP["Manual Hours"]]),
             # Baseline
             "baseline_hours":     n(bl, "Manual Effort Baseline"),
+            # Full baseline dict for AI prompt context
+            "baseline_dict":      bl,
         }
         result.append(entry)
     return result
@@ -1171,7 +1173,7 @@ async function generateAnalysis() {{
     domain: DOMAIN,
     current: entry,
     previous: prev,
-    baseline: entry.baseline || {{}},
+    baseline: entry.baseline_dict || {{}},
   }};
 
   try {{
