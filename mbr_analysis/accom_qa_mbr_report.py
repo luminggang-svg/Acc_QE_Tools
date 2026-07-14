@@ -12,17 +12,36 @@ Requirements:
 """
 
 import argparse
+import http.server
 import json
 import os
+import socketserver
 import subprocess
 import sys
+import threading
+import urllib.request
+import urllib.error
 from datetime import datetime
+from pathlib import Path
 
 # Configuration
 BASE_TOKEN = "LTgsbKdaIa65kdsGQPIl1wUggqc"
 TABLE_ID = "tblqAZmTWnHRwDb2"
 VIEW_ID = "vewhlHhNSt"
 IDENTITY = "user"
+
+# LiteLLM config — set these before running
+LITELLM_API_KEY  = ""   # your company LiteLLM API key
+LITELLM_BASE_URL = ""   # e.g. https://litellm.yourcompany.com
+LITELLM_MODEL    = "claude-sonnet-4.6"
+
+# Child table IDs
+TABLE_AMS                = "tblPLbLZqbJoSXS4"
+TABLE_BACKEND_COVERAGE   = "tbl3ffKbMhKz3Bs6"
+TABLE_MOBILE_COVERAGE    = "tblqA5KCHCsUsvLR"
+TABLE_WEB_COVERAGE       = "tbltpndvAxB7wSBe"
+TABLE_AUTO_EFFECTIVENESS = "tblp9diZhqNOTz2I"
+TABLE_BASELINE           = "tblIHopqxv7vvPGP"
 
 METRICS = [
     "Manual Hours",
