@@ -764,7 +764,54 @@ def generate_html(labels, datasets, record_ids, domain, output_path, ams_data=No
 
     now = datetime.now().strftime("%Y-%m-%d %H:%M")
 
-    # Build data table with hyperlinks
+    # Serialize AMS data for JS
+    ams_data_js = json.dumps(ams_data if ams_data else [])
+
+    # Build AMS Overview HTML (placeholder divs — JS fills content)
+    ams_overview_html = """
+<div class="ams-overview" id="amsOverview">
+  <h2 style="margin-top:0">Automation Maturity Score — Overview</h2>
+  <div class="ams-score-row">
+    <span class="ams-score-big" id="amsScoreBig">—</span>
+    <span class="ams-level" id="amsLevelLabel"></span>
+    <span id="amsDeltaBadge"></span>
+  </div>
+  <div style="margin-bottom:8px;font-size:13px;color:#555;">Pillar contributions to final score:</div>
+  <div class="pillar-bar-wrap">
+    <div class="pillar-bar-label">Coverage (40%): <span id="covContrib">—</span></div>
+    <div class="pillar-bar-track"><div class="pillar-bar-fill" id="covBar" style="background:#4CAF50;width:0%"></div></div>
+  </div>
+  <div class="pillar-bar-wrap">
+    <div class="pillar-bar-label">Reliability (30%): <span id="relContrib">—</span></div>
+    <div class="pillar-bar-track"><div class="pillar-bar-fill" id="relBar" style="background:#2196F3;width:0%"></div></div>
+  </div>
+  <div class="pillar-bar-wrap">
+    <div class="pillar-bar-label">Efficiency (30%): <span id="effContrib">—</span></div>
+    <div class="pillar-bar-track"><div class="pillar-bar-fill" id="effBar" style="background:#FF9800;width:0%"></div></div>
+  </div>
+</div>
+
+<div class="pillar-cards" id="pillarCards">
+  <div class="pillar-card">
+    <h3>Coverage <span style="font-weight:normal;color:#888">(40% weight)</span></h3>
+    <div class="pillar-score" style="color:#4CAF50" id="covScore">—</div>
+    <div class="pillar-contrib" id="covContribDetail"></div>
+    <div id="covSubBars"></div>
+  </div>
+  <div class="pillar-card">
+    <h3>Reliability <span style="font-weight:normal;color:#888">(30% weight)</span></h3>
+    <div class="pillar-score" style="color:#2196F3" id="relScore">—</div>
+    <div class="pillar-contrib" id="relContribDetail"></div>
+    <div id="relSubBars"></div>
+  </div>
+  <div class="pillar-card">
+    <h3>Efficiency <span style="font-weight:normal;color:#888">(30% weight)</span></h3>
+    <div class="pillar-score" style="color:#FF9800" id="effScore">—</div>
+    <div class="pillar-contrib" id="effContribDetail"></div>
+    <div id="effSubBars"></div>
+  </div>
+</div>
+"""
     table_headers = ["Week"] + [m for m in METRICS]
     table_rows_js = []
     for i, label in enumerate(labels):
@@ -794,6 +841,28 @@ canvas {{ max-height: 320px; }}
 .data-table td a:hover {{ text-decoration: underline; }}
 .data-table tr:hover {{ background: #f0f7ff; }}
 .data-table tr.hidden {{ display: none; }}
+.ams-overview {{ background: white; border-radius: 8px; padding: 24px; margin: 20px 0; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }}
+.ams-score-row {{ display: flex; align-items: center; gap: 24px; flex-wrap: wrap; margin-bottom: 16px; }}
+.ams-score-big {{ font-size: 3em; font-weight: bold; color: #9C27B0; }}
+.ams-level {{ font-size: 1.1em; color: #555; }}
+.ams-delta-pos {{ background: #e8f5e9; color: #2e7d32; padding: 4px 12px; border-radius: 12px; font-weight: bold; }}
+.ams-delta-neg {{ background: #ffebee; color: #c62828; padding: 4px 12px; border-radius: 12px; font-weight: bold; }}
+.ams-delta-neu {{ background: #f5f5f5; color: #555; padding: 4px 12px; border-radius: 12px; }}
+.pillar-bar-wrap {{ margin: 8px 0; }}
+.pillar-bar-label {{ font-size: 12px; color: #666; margin-bottom: 2px; }}
+.pillar-bar-track {{ background: #eee; border-radius: 4px; height: 18px; position: relative; }}
+.pillar-bar-fill {{ height: 18px; border-radius: 4px; display: inline-block; transition: width 0.4s; }}
+.pillar-cards {{ display: flex; gap: 16px; flex-wrap: wrap; margin: 20px 0; }}
+.pillar-card {{ flex: 1; min-width: 260px; background: white; border-radius: 8px; padding: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }}
+.pillar-card h3 {{ margin: 0 0 4px 0; font-size: 1em; color: #333; }}
+.pillar-score {{ font-size: 2em; font-weight: bold; margin: 8px 0; }}
+.pillar-contrib {{ font-size: 0.85em; color: #888; margin-bottom: 12px; }}
+.sub-bar-row {{ margin: 6px 0; }}
+.sub-bar-name {{ font-size: 11px; color: #555; display: flex; justify-content: space-between; }}
+.sub-bar-track {{ background: #eee; border-radius: 3px; height: 10px; margin-top: 2px; }}
+.sub-bar-fill {{ height: 10px; border-radius: 3px; }}
+.efficiency-tier {{ display: inline-block; padding: 2px 10px; border-radius: 10px; font-size: 12px; font-weight: bold; background: #e3f2fd; color: #1565c0; margin-top: 8px; }}
+.unavailable {{ color: #aaa; font-style: italic; font-size: 0.9em; }}
 </style>
 </head>
 <body>
@@ -810,6 +879,8 @@ canvas {{ max-height: 320px; }}
     {"".join(f'<option value="{i}"{" selected" if i == len(labels)-1 else ""}>{l}</option>' for i, l in enumerate(labels))}
   </select>
 </div>
+
+{ams_overview_html}
 
 {chart_divs}
 
@@ -886,6 +957,8 @@ function filterRange() {{
       r.classList.add('hidden');
     }}
   }});
+
+  updateAmsOverview(end);
 }}
 
 function addProductionClickHandler() {{
@@ -923,6 +996,107 @@ function addProductionClickHandler() {{
 }}
 
 function filterWeek(week) {{}}
+
+const amsData = {ams_data_js};
+const PROXY_PORT = {proxy_port if proxy_port else 'null'};
+const DOMAIN = "{domain}";
+
+function subBar(name, val, weight, color) {{
+  const pct = val !== null ? (val * 100).toFixed(1) : null;
+  const w = val !== null ? Math.min(100, val * 100) : 0;
+  return `<div class="sub-bar-row">
+    <div class="sub-bar-name"><span>${{name}} <span style="color:#aaa">[wt ${{weight}}]</span></span><span>${{pct !== null ? pct + '%' : '—'}}</span></div>
+    <div class="sub-bar-track"><div class="sub-bar-fill" style="background:${{color}};width:${{w}}%"></div></div>
+  </div>`;
+}}
+
+function updateAmsOverview(toIdx) {{
+  if (!amsData || amsData.length === 0) return;
+  const toLabel = allLabels[toIdx];
+  const entry = amsData.find(d => d.end_date === toLabel);
+  if (!entry) return;
+  const prevIdx = amsData.findIndex(d => d.end_date === toLabel) - 1;
+  const prev = prevIdx >= 0 ? amsData[prevIdx] : null;
+
+  const score = entry.ams_score;
+  document.getElementById('amsScoreBig').textContent = score !== null ? score.toFixed(1) : '—';
+  document.getElementById('amsLevelLabel').textContent = score !== null ? amsLevel(score) : '';
+
+  const badge = document.getElementById('amsDeltaBadge');
+  if (prev && prev.ams_score !== null && score !== null) {{
+    const delta = score - prev.ams_score;
+    const sign = delta >= 0 ? '+' : '';
+    badge.textContent = sign + delta.toFixed(1) + ' vs prev';
+    badge.className = delta > 0 ? 'ams-delta-pos' : (delta < 0 ? 'ams-delta-neg' : 'ams-delta-neu');
+  }} else {{
+    badge.textContent = 'First period';
+    badge.className = 'ams-delta-neu';
+  }}
+
+  const cov = entry.coverage_score, rel = entry.reliability_score, eff = entry.efficiency_score;
+  const covC = cov !== null ? (cov * 0.40).toFixed(1) : '—';
+  const relC = rel !== null ? (rel * 0.30).toFixed(1) : '—';
+  const effC = eff !== null ? (eff * 0.30).toFixed(1) : '—';
+  document.getElementById('covContrib').textContent = covC + ' pts';
+  document.getElementById('relContrib').textContent = relC + ' pts';
+  document.getElementById('effContrib').textContent = effC + ' pts';
+  document.getElementById('covBar').style.width = (cov !== null ? Math.min(100, cov) : 0) + '%';
+  document.getElementById('relBar').style.width = (rel !== null ? Math.min(100, rel) : 0) + '%';
+  document.getElementById('effBar').style.width = (eff !== null ? Math.min(100, eff) : 0) + '%';
+
+  document.getElementById('covScore').textContent = cov !== null ? cov.toFixed(1) : '—';
+  document.getElementById('covContribDetail').textContent = `Contributes ${{covC}} pts to AMS`;
+  document.getElementById('covSubBars').innerHTML =
+    '<b style="font-size:11px;color:#888">Backend (60%)</b>' +
+    subBar('Unit Test', entry.be_unit, '35%', '#4CAF50') +
+    subBar('Contract', entry.be_contract, '35%', '#4CAF50') +
+    subBar('Intra-Service', entry.be_intra, '10%', '#4CAF50') +
+    subBar('Inter-Service', entry.be_inter, '15%', '#4CAF50') +
+    subBar('API E2E', entry.be_api_e2e, '5%', '#4CAF50') +
+    '<b style="font-size:11px;color:#888;display:block;margin-top:8px">Mobile (20%)</b>' +
+    subBar('Unit Test', entry.mob_unit, '30%', '#8BC34A') +
+    subBar('Integration', entry.mob_integration, '20%', '#8BC34A') +
+    subBar('E2E', entry.mob_e2e, '50%', '#8BC34A') +
+    '<b style="font-size:11px;color:#888;display:block;margin-top:8px">Web (20%)</b>' +
+    subBar('Unit Test', entry.web_unit, '30%', '#CDDC39') +
+    subBar('Component', entry.web_component, '20%', '#CDDC39') +
+    subBar('E2E', entry.web_e2e, '50%', '#CDDC39');
+
+  document.getElementById('relScore').textContent = rel !== null ? rel.toFixed(1) : '—';
+  document.getElementById('relContribDetail').textContent = `Contributes ${{relC}} pts to AMS`;
+  document.getElementById('relSubBars').innerHTML =
+    subBar('Backend Stability', entry.backend_stability !== null ? entry.backend_stability / 100 : null, '50%', '#2196F3') +
+    subBar('Mobile Stability',  entry.mobile_stability  !== null ? entry.mobile_stability  / 100 : null, '25%', '#2196F3') +
+    subBar('Web Stability',     entry.web_stability     !== null ? entry.web_stability     / 100 : null, '25%', '#2196F3');
+
+  document.getElementById('effScore').textContent = eff !== null ? eff.toFixed(1) : '—';
+  document.getElementById('effContribDetail').textContent = `Contributes ${{effC}} pts to AMS`;
+  const bl = entry.baseline_hours;
+  const mh = entry.manual_hours;
+  const blStr = bl !== null ? bl + 'h baseline' : '';
+  const mhStr = mh !== null ? mh + 'h manual' : '—';
+  const barPct = (bl && mh) ? Math.min(100, (mh / bl) * 100) : 0;
+  document.getElementById('effSubBars').innerHTML =
+    `<div style="font-size:12px;color:#555;margin-bottom:6px">${{mhStr}} / ${{blStr}}</div>
+     <div class="sub-bar-track" style="height:14px"><div class="sub-bar-fill" style="background:#FF9800;width:${{barPct}}%;height:14px"></div></div>
+     <div class="efficiency-tier">${{efficiencyTier(mh)}}</div>`;
+}}
+
+function amsLevel(score) {{
+  if (score >= 81) return 'Level 5: Optimizing';
+  if (score >= 61) return 'Level 4: Measured';
+  if (score >= 41) return 'Level 3: Defined';
+  if (score >= 21) return 'Level 2: Emerging';
+  return 'Level 1: Initial';
+}}
+
+function efficiencyTier(h) {{
+  if (h === null || h === undefined) return 'N/A';
+  if (h <= 50)  return 'Optimized';
+  if (h <= 100) return 'Advanced';
+  if (h <= 150) return 'Developing';
+  return 'Initial';
+}}
 
 // Initial render (filterRange already calls addProductionClickHandler internally)
 filterRange();
