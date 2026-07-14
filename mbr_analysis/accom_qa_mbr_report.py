@@ -370,7 +370,8 @@ DEFAULT_SYSTEM_PROMPT = (
     "not math notation. Structure your response in exactly four sections with these "
     'headers: "How AMS is Calculated", "This Period\'s Breakdown", "Key Movers", '
     '"Action Items". Each section should be 3-6 sentences. Do not use bullet points — '
-    "write in paragraphs."
+    'write in paragraphs, EXCEPT for the "Action Items" section which MUST use a numbered '
+    "list (1. 2. 3.) with one action per line, each 1-2 sentences."
 )
 
 
@@ -834,7 +835,7 @@ def generate_html(labels, datasets, record_ids, domain, output_path, ams_data=No
     # Build AMS Overview HTML (placeholder divs — JS fills content)
     ams_overview_html = """
 <div class="ams-overview" id="amsOverview">
-  <h2 style="margin-top:0">Automation Maturity Score — Overview</h2>
+  <h2 style="margin-top:0">Automation Maturity Score — Overview <span id="amsPeriodLabel" style="font-weight:normal;font-size:0.6em;color:#888"></span></h2>
   <div class="ams-score-row">
     <span class="ams-score-big" id="amsScoreBig">—</span>
     <span class="ams-level" id="amsLevelLabel"></span>
@@ -1103,6 +1104,10 @@ function updateAmsOverview(toIdx) {{
   const prevIdx = amsData.findIndex(d => d.end_date === toLabel) - 1;
   const prev = prevIdx >= 0 ? amsData[prevIdx] : null;
 
+  // Show which period this overview represents
+  const fromLabel = allLabels[Math.max(0, toIdx - 1 < 0 ? 0 : prevIdx >= 0 ? prevIdx : 0)];
+  document.getElementById('amsPeriodLabel').textContent = '— Period ending ' + toLabel;
+
   const score = entry.ams_score;
   document.getElementById('amsScoreBig').textContent = score !== null ? score.toFixed(1) : '—';
   document.getElementById('amsLevelLabel').textContent = score !== null ? amsLevel(score) : '';
@@ -1214,7 +1219,21 @@ function updateNarrativePanel(toIdx) {{
 }}
 
 function renderNarrative(text) {{
-  const formatted = text.replace(/^(How AMS is Calculated|This Period's Breakdown|Key Movers|Action Items)$/gm, '<h3>$1</h3>');
+  // Replace section headers with <h3>
+  let formatted = text.replace(/^(How AMS is Calculated|This Period's Breakdown|Key Movers|Action Items)$/gm, '<h3>$1</h3>');
+  // Convert numbered list lines (1. 2. 3.) inside Action Items into <ul><li> bullets.
+  // Match lines starting with a digit followed by ". "
+  formatted = formatted.replace(
+    /(<h3>Action Items<\/h3>)([\s\S]*?)(?=<h3>|$)/,
+    function(match, header, body) {{
+      const items = body.trim().split(/\n/).filter(l => l.trim());
+      const listItems = items.map(line => {{
+        const clean = line.replace(/^\d+\.\s*/, '').trim();
+        return clean ? '<li>' + clean + '</li>' : '';
+      }}).join('');
+      return header + '<ul style="margin:8px 0 0 0;padding-left:20px;line-height:1.7">' + listItems + '</ul>';
+    }}
+  );
   document.getElementById('aiNarrativeText').innerHTML = formatted;
 }}
 
