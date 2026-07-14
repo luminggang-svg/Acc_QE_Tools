@@ -671,7 +671,7 @@ def extract_metrics(records):
     return labels, datasets, record_ids
 
 
-def generate_html(labels, datasets, record_ids, domain, output_path):
+def generate_html(labels, datasets, record_ids, domain, output_path, ams_data=None, proxy_port=None):
     """Generate interactive HTML visualization."""
     # Serialize data for JS
     def to_js_array(arr):
@@ -945,22 +945,42 @@ def main():
     if args.output is None:
         args.output = f"{args.domain.lower().replace(' ', '_')}_qa_mbr_trends.html"
 
-    # Step 1: Fetch data
-    raw_output = fetch_records()
+    # Step 1: Start proxy server (always, regardless of --open)
+    proxy_port = start_proxy_server()
 
-    # Step 2: Parse and filter
-    records = parse_records(raw_output, domain_filter=args.domain)
+    # Step 2: Fetch all tables in parallel
+    print("Fetching data from Lark Base...")
+    raw_tables = fetch_all_tables()
+
+    # Step 3: Parse main table
+    records = parse_records(raw_tables["main"], domain_filter=args.domain)
     if not records:
         print(f"No records found for domain: {args.domain}")
         sys.exit(1)
 
-    # Step 3: Extract metrics
+    # Step 4: Parse child tables
+    child_data = {
+        "ams":                parse_child_table(raw_tables.get("ams"), args.domain),
+        "backend_coverage":   parse_child_table(raw_tables.get("backend_coverage"), args.domain),
+        "mobile_coverage":    parse_child_table(raw_tables.get("mobile_coverage"), args.domain),
+        "web_coverage":       parse_child_table(raw_tables.get("web_coverage"), args.domain),
+        "auto_effectiveness": parse_child_table(raw_tables.get("auto_effectiveness"), args.domain),
+    }
+    baseline = parse_baseline_table(raw_tables.get("baseline"), args.domain)
+
+    # Step 5: Join enriched records
+    enriched = join_enriched_records(records, child_data, baseline)
+
+    # Step 6: Extract existing metrics (unchanged)
     labels, datasets, record_ids = extract_metrics(records)
 
-    # Step 4: Generate visualization
-    generate_html(labels, datasets, record_ids, args.domain, args.output)
+    # Step 7: Extract AMS pillar data
+    ams_data = extract_ams_data(enriched)
 
-    # Step 5: Optionally open
+    # Step 8: Generate visualization
+    generate_html(labels, datasets, record_ids, args.domain, args.output, ams_data, proxy_port)
+
+    # Step 9: Optionally open
     if args.open:
         if sys.platform == "darwin":
             subprocess.run(["open", args.output])
