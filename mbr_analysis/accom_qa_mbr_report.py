@@ -294,8 +294,10 @@ def extract_ams_data(enriched_records):
 
         entry = {
             "end_date": row["_end_date"],
-            # AMS table — field names as truncated by lark-cli markdown output
-            "ams_score":          n(ams, "Automation Maturity ..."),
+            # AMS score comes from the main MBR table (updated weekly, always current).
+            # The AMS child table is monthly and may lag — main table is the source of truth.
+            "ams_score":          parse_num(rec[COL_MAP["Automation Maturity Score"]]),
+            # Pillar scores come from the AMS child table (monthly breakdown)
             "coverage_score":     n(ams, "Coverage"),
             "reliability_score":  n(ams, "Reliability"),
             "efficiency_score":   n(ams, "Efficiency"),
