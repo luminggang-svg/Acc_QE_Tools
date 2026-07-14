@@ -19,6 +19,7 @@ import socketserver
 import subprocess
 import sys
 import threading
+import time
 import urllib.request
 import urllib.error
 from datetime import datetime
@@ -103,7 +104,6 @@ def fetch_records(max_retries=3):
         "--limit", "200",
     ]
 
-    import time
     for attempt in range(1, max_retries + 1):
         print(f"Fetching records from Lark Base (attempt {attempt}/{max_retries})...")
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
@@ -138,7 +138,6 @@ def fetch_records(max_retries=3):
 
 def fetch_table_raw(table_id, label, results, errors, max_retries=3):
     """Fetch all records from a Lark Base table into results[label]. Non-fatal on error."""
-    import time
     cmd = [
         "lark-cli", "base", "+record-list",
         "--as", IDENTITY,
@@ -162,10 +161,12 @@ def fetch_table_raw(table_id, label, results, errors, max_retries=3):
             results[label] = output
             return
         except Exception as e:
-            if attempt == max_retries:
+            if attempt < max_retries:
+                print(f"  Warning: {label} fetch attempt {attempt} failed ({e}), retrying...")
+            else:
                 errors[label] = str(e)
                 results[label] = None
-                print(f"  Warning: failed to fetch {label} table ({e})")
+                print(f"  Warning: failed to fetch {label} table after {max_retries} attempts ({e})")
 
 
 def fetch_all_tables():
@@ -266,9 +267,9 @@ def parse_baseline_table(raw_output, domain_filter):
     return {}
 
 
-def join_enriched_records(main_records, child_data, baseline, domain_filter):
+def join_enriched_records(main_records, child_data, baseline):
     """Join main records with child table data by End Date key.
-    Returns list of enriched dicts, one per period, sorted by End Date."""
+    Returns list of enriched dicts, one per period, in main_records order."""
     enriched = []
     for rec in main_records:
         end_key = rec[COL_MAP["End Date"]][:10]
@@ -369,10 +370,7 @@ def efficiency_tier_label(manual_hours):
         return "Advanced"
     if manual_hours <= 150:
         return "Developing"
-    if manual_hours <= 200:
-        return "Initial"
     return "Initial"
-
 
 DEFAULT_SYSTEM_PROMPT = (
     "You are a QA metrics analyst explaining Automation Maturity Score (AMS) results "
@@ -404,6 +402,13 @@ def load_system_prompt():
                 kb_sections.append(f"### {f.stem}\n{f.read_text(encoding='utf-8').strip()}")
             prompt += "\n\n## Knowledge Base\n\n" + "\n\n".join(kb_sections)
     return prompt
+
+
+def _pct(val):
+    """Format a 0-1 decimal as a percentage string, or return 'N/A'."""
+    if val is None:
+        return "N/A"
+    return f"{val * 100:.1f}%"
 
 
 class ProxyHandler(http.server.BaseHTTPRequestHandler):
@@ -444,7 +449,15 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
 
         # Read request body
         length = int(self.headers.get("Content-Length", 0))
-        body = json.loads(self.rfile.read(length))
+        try:
+            body = json.loads(self.rfile.read(length))
+        except (json.JSONDecodeError, ValueError):
+            self.send_response(400)
+            self._cors_headers()
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps({"error": "Missing or empty request body"}).encode())
+            return
 
         current = body.get("current", {})
         previous = body.get("previous")
@@ -543,18 +556,14 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
             self.wfile.write(json.dumps({"error": str(e)}).encode())
 
 
-def _pct(val):
-    """Format a 0-1 decimal as a percentage string, or return 'N/A'."""
-    if val is None:
-        return "N/A"
-    return f"{val * 100:.1f}%"
-
-
 def start_proxy_server():
     """Start the LiteLLM proxy on a random available port. Returns the port number."""
     ProxyHandler.system_prompt = load_system_prompt()
-    server = socketserver.TCPServer(("localhost", 0), ProxyHandler)
-    server.allow_reuse_address = True
+
+    class _ReuseAddrServer(socketserver.TCPServer):
+        allow_reuse_address = True
+
+    server = _ReuseAddrServer(("localhost", 0), ProxyHandler)
     port = server.server_address[1]
     t = threading.Thread(target=server.serve_forever, daemon=True)
     t.start()
