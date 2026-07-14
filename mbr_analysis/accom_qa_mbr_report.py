@@ -14,7 +14,6 @@ Requirements:
 import argparse
 import http.server
 import json
-import os
 import socketserver
 import subprocess
 import sys
@@ -91,49 +90,6 @@ COL_MAP = {
     "Avg Unit Test Coverage": 39,
     "Avg E2E Test Coverage": 40,
 }
-
-
-def fetch_records(max_retries=3):
-    """Fetch records from Lark Base using lark-cli with retry on transient errors."""
-    cmd = [
-        "lark-cli", "base", "+record-list",
-        "--as", IDENTITY,
-        "--base-token", BASE_TOKEN,
-        "--table-id", TABLE_ID,
-        "--view-id", VIEW_ID,
-        "--limit", "200",
-    ]
-
-    for attempt in range(1, max_retries + 1):
-        print(f"Fetching records from Lark Base (attempt {attempt}/{max_retries})...")
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
-        output = result.stdout + result.stderr
-
-        if not output.strip():
-            print("Error: No output from lark-cli. Ensure you are authenticated.")
-            print("Run: lark-cli auth login --domain base")
-            sys.exit(1)
-
-        # Check for transient errors (TLS timeout, network issues)
-        if "TLS handshake timeout" in output or "connection reset" in output.lower():
-            if attempt < max_retries:
-                wait = attempt * 5
-                print(f"  Network error, retrying in {wait}s...")
-                time.sleep(wait)
-                continue
-            else:
-                print("Error: Network request failed after all retries.")
-                print(output[:500])
-                sys.exit(1)
-
-        # Check for auth errors
-        if '"ok": false' in output and "missing_scope" in output:
-            print("Error: Missing permissions. Run: lark-cli auth login --domain base")
-            sys.exit(1)
-
-        return output
-
-    return output
 
 
 def fetch_table_raw(table_id, label, results, errors, max_retries=3):
