@@ -14,6 +14,7 @@ Requirements:
 import argparse
 import http.server
 import json
+import os
 import socketserver
 import subprocess
 import sys
@@ -548,28 +549,65 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
 PROXY_IDLE_TIMEOUT = 7200  # seconds — proxy auto-shuts down after 2h of inactivity
 
 
+def _kill_previous_proxy(port):
+    """If a previous instance of this script is holding the fixed proxy port, kill it.
+    Only kills processes whose command line contains this script's filename.
+    Does nothing if the port is held by an unrelated process (leaves it alone)."""
+    import signal
+    script_name = Path(__file__).name  # e.g. "accom_qa_mbr_report.py"
+    try:
+        result = subprocess.run(
+            ["lsof", "-ti", f"tcp:{port}"],
+            capture_output=True, text=True
+        )
+        pids = result.stdout.strip().splitlines()
+    except Exception:
+        return  # lsof not available — skip silently
+
+    for pid_str in pids:
+        try:
+            pid = int(pid_str.strip())
+            if pid == os.getpid():
+                continue  # skip self (shouldn't happen but be safe)
+            # Check if this PID belongs to the same script
+            cmd_result = subprocess.run(
+                ["ps", "-p", str(pid), "-o", "command="],
+                capture_output=True, text=True
+            )
+            if script_name in cmd_result.stdout:
+                os.kill(pid, signal.SIGTERM)
+                print(f"  Closed previous proxy session (PID {pid}) on port {port}.")
+                time.sleep(0.3)  # brief pause to let the port be released
+            else:
+                print(f"  Note: port {port} is held by a different process (PID {pid}, not this script). Using fallback port.")
+        except (ValueError, ProcessLookupError):
+            pass
+
+
 def start_proxy_server():
     """Start the LiteLLM proxy on a random available port. Returns the port number.
 
-    The server runs as a daemon thread and shuts itself down automatically after
-    PROXY_IDLE_TIMEOUT seconds of inactivity, freeing the port without requiring
-    the user to manually kill the process.
+    If a previous instance of this script is holding the fixed port, it is
+    terminated automatically for a clean session. The server shuts itself down
+    after PROXY_IDLE_TIMEOUT seconds of inactivity, freeing the port.
     """
     ProxyHandler.system_prompt = load_system_prompt()
 
     class _ReuseAddrServer(socketserver.TCPServer):
         allow_reuse_address = True
 
-    # Try fixed port first so existing HTML files can reconnect to a new proxy run.
-    # Fall back to a random port if the fixed port is already occupied.
+    # Kill any previous session of this script on the fixed port for a clean start.
+    _kill_previous_proxy(PROXY_PORT_FIXED)
+
+    # Try fixed port. Fall back to random only if held by a non-script process.
     try:
         server = _ReuseAddrServer(("localhost", PROXY_PORT_FIXED), ProxyHandler)
         port = PROXY_PORT_FIXED
     except OSError:
         server = _ReuseAddrServer(("localhost", 0), ProxyHandler)
         port = server.server_address[1]
-        print(f"  Note: fixed port {PROXY_PORT_FIXED} was busy, using random port {port} instead.")
-        print(f"  To use the fixed port, stop any other process on {PROXY_PORT_FIXED} or change PROXY_PORT_FIXED in the script.")
+        print(f"  Note: fixed port {PROXY_PORT_FIXED} still busy (held by another process), using port {port} instead.")
+        print(f"  To always use the fixed port, free port {PROXY_PORT_FIXED} or change PROXY_PORT_FIXED in the script.")
 
     def _serve_with_timeout():
         server.timeout = PROXY_IDLE_TIMEOUT
