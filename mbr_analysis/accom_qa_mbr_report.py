@@ -32,8 +32,8 @@ VIEW_ID = "vewhlHhNSt"
 IDENTITY = "user"
 
 # LiteLLM config — set these before running
-LITELLM_API_KEY  = "sk-fxYlNgQYTiGTg8ylEHbHIg"   # your company LiteLLM API key
-LITELLM_BASE_URL = "https://litellm.tvlk.cloud"   # e.g. https://litellm.yourcompany.com
+LITELLM_API_KEY  = ""   # your company LiteLLM API key
+LITELLM_BASE_URL = ""   # e.g. https://litellm.yourcompany.com
 LITELLM_MODEL    = "claude-sonnet-4.6"
 
 # Proxy port — fixed so the HTML can always reach the proxy regardless of when it was generated.

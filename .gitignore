@@ -1,0 +1,10 @@
+# Generated report files — do not commit
+*_qa_mbr_trends.html
+accommodation_qa_mbr_trends.html
+
+# macOS
+.DS_Store
+
+# Python
+__pycache__/
+*.pyc
