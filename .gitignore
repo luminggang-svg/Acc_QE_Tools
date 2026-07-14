@@ -1,6 +1,8 @@
 # Generated report files — do not commit
 *_qa_mbr_trends.html
 accommodation_qa_mbr_trends.html
+*_qa_mbr_trends_notes.db
+*_notes.db
 
 # macOS
 .DS_Store
