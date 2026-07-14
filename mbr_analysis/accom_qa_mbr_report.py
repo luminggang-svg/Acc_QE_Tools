@@ -710,6 +710,7 @@ def parse_num(val):
 def extract_metrics(records):
     """Extract all metrics from parsed records."""
     labels = [r[COL_MAP["End Date"]][:10] for r in records]
+    start_dates = [r[COL_MAP["Start Date"]][:10] for r in records]
     record_ids = get_record_ids(records)
 
     datasets = {}
@@ -733,10 +734,10 @@ def extract_metrics(records):
         else:
             datasets[metric] = [parse_pct(r[COL_MAP[metric]]) for r in records]
 
-    return labels, datasets, record_ids
+    return labels, start_dates, datasets, record_ids
 
 
-def generate_html(labels, datasets, record_ids, domain, output_path, ams_data=None, proxy_port=None):
+def generate_html(labels, start_dates, datasets, record_ids, domain, output_path, ams_data=None, proxy_port=None):
     """Generate interactive HTML visualization."""
     # Serialize data for JS
     def to_js_array(arr):
@@ -989,6 +990,7 @@ canvas {{ max-height: 320px; }}
 
 <script>
 const allLabels = {json.dumps(labels)};
+const allStartDates = {json.dumps(start_dates)};
 const recordUrls = {json.dumps(record_urls)};
 const allDatasets = {json.dumps({m: datasets[m] for m in METRICS})};
 const chartConfigs = {json.dumps([{"id": g["id"], "yTitle": g["y_title"], "series": g["series"]} for g in chart_groups])};
@@ -1104,9 +1106,11 @@ function updateAmsOverview(toIdx) {{
   const prevIdx = amsData.findIndex(d => d.end_date === toLabel) - 1;
   const prev = prevIdx >= 0 ? amsData[prevIdx] : null;
 
-  // Show which period this overview represents
-  const fromLabel = allLabels[Math.max(0, toIdx - 1 < 0 ? 0 : prevIdx >= 0 ? prevIdx : 0)];
-  document.getElementById('amsPeriodLabel').textContent = '— Period ending ' + toLabel;
+  // Show period range and source link
+  const startLabel = allStartDates[toIdx];
+  const sourceUrl = recordUrls[toIdx];
+  document.getElementById('amsPeriodLabel').innerHTML =
+    `— <a href="${{sourceUrl}}" target="_blank" style="color:#9C27B0;text-decoration:none;border-bottom:1px dotted #9C27B0">${{startLabel}} → ${{toLabel}}</a>`;
 
   const score = entry.ams_score;
   document.getElementById('amsScoreBig').textContent = score !== null ? score.toFixed(1) : '—';
@@ -1354,13 +1358,13 @@ def main():
     enriched = join_enriched_records(records, child_data, baseline)
 
     # Step 6: Extract existing metrics (unchanged)
-    labels, datasets, record_ids = extract_metrics(records)
+    labels, start_dates, datasets, record_ids = extract_metrics(records)
 
     # Step 7: Extract AMS pillar data
     ams_data = extract_ams_data(enriched)
 
     # Step 8: Generate visualization
-    generate_html(labels, datasets, record_ids, args.domain, args.output, ams_data, proxy_port)
+    generate_html(labels, start_dates, datasets, record_ids, args.domain, args.output, ams_data, proxy_port)
 
     # Step 9: Optionally open
     if args.open:
