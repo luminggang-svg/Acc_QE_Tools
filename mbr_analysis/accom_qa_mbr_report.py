@@ -136,6 +136,70 @@ def fetch_records(max_retries=3):
     return output
 
 
+def fetch_table_raw(table_id, label, results, errors, max_retries=3):
+    """Fetch all records from a Lark Base table into results[label]. Non-fatal on error."""
+    import time
+    cmd = [
+        "lark-cli", "base", "+record-list",
+        "--as", IDENTITY,
+        "--base-token", BASE_TOKEN,
+        "--table-id", table_id,
+        "--limit", "200",
+    ]
+    for attempt in range(1, max_retries + 1):
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+            output = result.stdout + result.stderr
+            if not output.strip():
+                raise RuntimeError("Empty output from lark-cli")
+            if "TLS handshake timeout" in output or "connection reset" in output.lower():
+                if attempt < max_retries:
+                    time.sleep(attempt * 5)
+                    continue
+                raise RuntimeError("Network error after retries")
+            if '"ok": false' in output and "missing_scope" in output:
+                raise RuntimeError("Missing lark-cli scope — run: lark-cli auth login --domain base")
+            results[label] = output
+            return
+        except Exception as e:
+            if attempt == max_retries:
+                errors[label] = str(e)
+                results[label] = None
+                print(f"  Warning: failed to fetch {label} table ({e})")
+
+
+def fetch_all_tables():
+    """Fetch all 7 tables in parallel. Returns dict of raw outputs keyed by label."""
+    tables = {
+        "main":               TABLE_ID,
+        "ams":                TABLE_AMS,
+        "backend_coverage":   TABLE_BACKEND_COVERAGE,
+        "mobile_coverage":    TABLE_MOBILE_COVERAGE,
+        "web_coverage":       TABLE_WEB_COVERAGE,
+        "auto_effectiveness": TABLE_AUTO_EFFECTIVENESS,
+        "baseline":           TABLE_BASELINE,
+    }
+    results = {}
+    errors = {}
+    threads = []
+    for label, table_id in tables.items():
+        print(f"  Fetching {label} table ({table_id})...")
+        t = threading.Thread(
+            target=fetch_table_raw,
+            args=(table_id, label, results, errors),
+            daemon=True,
+        )
+        threads.append(t)
+        t.start()
+    for t in threads:
+        t.join()
+
+    if results.get("main") is None:
+        print("Error: Failed to fetch main MBR table. Cannot continue.")
+        sys.exit(1)
+    return results
+
+
 def parse_records(raw_output, domain_filter="Accommodation"):
     """Parse markdown table output into structured data."""
     lines = raw_output.splitlines()
